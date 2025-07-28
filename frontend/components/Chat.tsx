@@ -20,16 +20,6 @@ export default function Chat({ socket }: ChatProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const { user, room } = useAppStore()
 
-  // Debug environment variables
-  useEffect(() => {
-    console.log('🔧 Environment variables:')
-    console.log('- NEXT_PUBLIC_API_URL:', process.env.NEXT_PUBLIC_API_URL)
-    console.log('- NEXT_PUBLIC_WS_URL:', process.env.NEXT_PUBLIC_WS_URL)
-    console.log('🔧 User and Room:')
-    console.log('- User:', user)
-    console.log('- Room:', room)
-  }, [user, room])
-
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
@@ -70,32 +60,12 @@ export default function Chat({ socket }: ChatProps) {
   }
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    console.log('🔍 File upload triggered')
-    console.log('File input event:', e)
-    console.log('Files:', e.target.files)
-    
     const file = e.target.files?.[0]
-    console.log('Selected file:', file)
     
     if (!file || !socket || !user || !room) {
-      console.log('❌ Upload conditions not met:')
-      console.log('- File:', !!file)
-      console.log('- Socket:', !!socket)
-      console.log('- User:', !!user)
-      console.log('- Room:', !!room)
-      console.log('- User ID:', user?.id)
-      console.log('- Room ID:', room?.id)
       toast.error('Please select a file and ensure you are connected')
       return
     }
-
-    console.log('✅ Starting file upload...')
-    console.log('File details:', {
-      name: file.name,
-      size: file.size,
-      type: file.type
-    })
-    console.log('API URL:', process.env.NEXT_PUBLIC_API_URL)
 
     setIsUploading(true)
 
@@ -106,24 +76,18 @@ export default function Chat({ socket }: ChatProps) {
       formData.append('room_id', room.id)
       formData.append('user_id', user.id)
 
-      console.log('📤 Sending upload request...')
-
       // Upload file
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/upload-file`, {
         method: 'POST',
         body: formData,
       })
 
-      console.log('📥 Response received:', response.status, response.statusText)
-
       if (!response.ok) {
         const errorData = await response.json()
-        console.error('❌ Upload failed:', errorData)
         throw new Error(errorData.detail || 'Upload failed')
       }
 
       const data = await response.json()
-      console.log('✅ Upload successful:', data)
       
       if (data.success) {
         const message: Message = {
@@ -139,8 +103,6 @@ export default function Chat({ socket }: ChatProps) {
           fileType: data.file_type || file.type,
         }
 
-        console.log('📨 Sending WebSocket message:', message)
-
         // Send via WebSocket
         socket.send(JSON.stringify({
           type: 'message',
@@ -154,7 +116,7 @@ export default function Chat({ socket }: ChatProps) {
         throw new Error('Upload failed')
       }
     } catch (error) {
-      console.error('❌ Error uploading file:', error)
+      console.error('Error uploading file:', error)
       toast.error(`Upload failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
     } finally {
       setIsUploading(false)

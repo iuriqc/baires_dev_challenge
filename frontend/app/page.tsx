@@ -6,7 +6,6 @@ import { Users, MessageCircle, Palette, Upload, Settings } from 'lucide-react'
 import Whiteboard from '@/components/Whiteboard'
 import Chat from '@/components/Chat'
 import UserPanel from '@/components/UserPanel'
-import FileUploadTest from '@/components/FileUploadTest'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import { useAppStore } from '@/store/appStore'
 import toast from 'react-hot-toast'
@@ -15,14 +14,6 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<'whiteboard' | 'chat'>('whiteboard')
   const [isConnected, setIsConnected] = useState(false)
   const { user, room, setUser, setRoom } = useAppStore()
-  
-  // Debug environment variables
-  useEffect(() => {
-    console.log('🌐 Environment Check:')
-    console.log('- NEXT_PUBLIC_API_URL:', process.env.NEXT_PUBLIC_API_URL)
-    console.log('- NEXT_PUBLIC_WS_URL:', process.env.NEXT_PUBLIC_WS_URL)
-    console.log('- NODE_ENV:', process.env.NODE_ENV)
-  }, [])
   
   // Initialize user if not set
   useEffect(() => {
@@ -112,8 +103,6 @@ export default function Home() {
 
           {/* Right Panel - Chat & Users */}
           <div className="lg:col-span-1 space-y-6">
-            {/* File Upload Test - Temporary for debugging */}
-            <FileUploadTest />
             
             {/* Tab Navigation */}
             <div className="bg-white rounded-lg shadow-sm border">
