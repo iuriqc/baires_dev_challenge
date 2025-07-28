@@ -141,7 +141,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                 # Broadcast to other users in the room
                 await manager.broadcast_to_room(room_id, {
                     "type": "drawing",
-                    "action": drawing_action.dict(),
+                    "action": drawing_action.model_dump(),
                     "user_id": user_id,
                     "timestamp": datetime.now().isoformat()
                 }, exclude_websocket=websocket)
@@ -154,7 +154,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                 # Broadcast to other users in the room
                 await manager.broadcast_to_room(room_id, {
                     "type": "message",
-                    "message": message.dict(),
+                    "message": message.model_dump(),
                     "user_id": user_id,
                     "timestamp": datetime.now().isoformat()
                 }, exclude_websocket=websocket)

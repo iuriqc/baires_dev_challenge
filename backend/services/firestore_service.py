@@ -20,10 +20,10 @@ class FirestoreService:
         self.db = firestore.AsyncClient()
         
     async def save_message(self, message: Message) -> None:
-        """Save a message to Firestore"""
+        """Save message to Firestore"""
         try:
             doc_ref = self.db.collection('messages').document(message.id)
-            await doc_ref.set(message.dict())
+            await doc_ref.set(message.model_dump())
         except Exception as e:
             print(f"Error saving message: {e}")
             raise
@@ -43,18 +43,16 @@ class FirestoreService:
                 data['id'] = doc.id
                 messages.append(data)
             
-            # Reverse to get chronological order
-            messages.reverse()
             return messages
         except Exception as e:
             print(f"Error getting messages: {e}")
             return []
     
     async def save_drawing_action(self, action: DrawingAction) -> None:
-        """Save a drawing action to Firestore"""
+        """Save drawing action to Firestore"""
         try:
             doc_ref = self.db.collection('drawing_actions').document(action.id)
-            await doc_ref.set(action.dict())
+            await doc_ref.set(action.model_dump())
         except Exception as e:
             print(f"Error saving drawing action: {e}")
             raise
@@ -132,7 +130,7 @@ class FirestoreService:
         """Save user data"""
         try:
             doc_ref = self.db.collection('users').document(user.id)
-            await doc_ref.set(user.dict())
+            await doc_ref.set(user.model_dump())
         except Exception as e:
             print(f"Error saving user: {e}")
             raise
