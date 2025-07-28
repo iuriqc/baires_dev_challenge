@@ -12,3 +12,4 @@ pydantic-settings==2.1.0
 aiofiles==23.2.1
 Pillow==10.1.0
 python-magic==0.4.27 
+pytest==8.4.1

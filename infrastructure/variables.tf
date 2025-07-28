@@ -36,4 +36,16 @@ variable "enable_ssl" {
   description = "Enable SSL for custom domain"
   type        = bool
   default     = false
+}
+
+variable "backend_image" {
+  description = "Backend Docker image URL (optional)"
+  type        = string
+  default     = ""
+}
+
+variable "frontend_image" {
+  description = "Frontend Docker image URL (optional)"
+  type        = string
+  default     = ""
 } 

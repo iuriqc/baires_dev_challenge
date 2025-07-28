@@ -1,246 +1,227 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from typing import List, Dict, Any
 import json
-import asyncio
-import uuid
-from datetime import datetime
+import logging
 import os
-from dotenv import load_dotenv
+from datetime import datetime
+import asyncio
 
+# Import services
 from services.firestore_service import FirestoreService
 from services.storage_service import StorageService
-from models.message import Message, MessageType
+
+# Import models
+from models.message import Message
 from models.drawing import DrawingAction
 from models.user import User
 
-load_dotenv()
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Collaborative Web App API", version="1.0.0")
+app = FastAPI(title="Collaborative App Backend", version="1.0.0")
 
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Initialize services
-firestore_service = FirestoreService()
-storage_service = StorageService()
+# Initialize services (lazy loading to avoid startup issues)
+firestore_service = None
+storage_service = None
+
+def get_firestore_service():
+    global firestore_service
+    if firestore_service is None:
+        firestore_service = FirestoreService()
+    return firestore_service
+
+def get_storage_service():
+    global storage_service
+    if storage_service is None:
+        storage_service = StorageService()
+    return storage_service
 
 # WebSocket connection manager
 class ConnectionManager:
     def __init__(self):
-        self.active_connections: Dict[str, WebSocket] = {}
-        self.room_connections: Dict[str, List[str]] = {}
-        self.user_rooms: Dict[str, str] = {}
+        self.active_connections: Dict[str, List[WebSocket]] = {}
+        self.user_rooms: Dict[str, str] = {}  # user_id -> room_id
 
-    async def connect(self, websocket: WebSocket, user_id: str, room_id: str):
+    async def connect(self, websocket: WebSocket, room_id: str, user_id: str):
         await websocket.accept()
-        self.active_connections[user_id] = websocket
         
-        if room_id not in self.room_connections:
-            self.room_connections[room_id] = []
-        self.room_connections[room_id].append(user_id)
+        if room_id not in self.active_connections:
+            self.active_connections[room_id] = []
+        
+        self.active_connections[room_id].append(websocket)
         self.user_rooms[user_id] = room_id
+        
+        # Notify others in the room
+        await self.broadcast_to_room(room_id, {
+            "type": "user_joined",
+            "user_id": user_id,
+            "timestamp": datetime.now().isoformat()
+        }, exclude_websocket=websocket)
 
-    def disconnect(self, user_id: str):
-        if user_id in self.active_connections:
-            del self.active_connections[user_id]
+    def disconnect(self, websocket: WebSocket, user_id: str):
+        room_id = self.user_rooms.get(user_id)
+        if room_id and room_id in self.active_connections:
+            if websocket in self.active_connections[room_id]:
+                self.active_connections[room_id].remove(websocket)
+            
+            # Notify others in the room
+            asyncio.create_task(self.broadcast_to_room(room_id, {
+                "type": "user_left",
+                "user_id": user_id,
+                "timestamp": datetime.now().isoformat()
+            }))
         
         if user_id in self.user_rooms:
-            room_id = self.user_rooms[user_id]
-            if room_id in self.room_connections:
-                self.room_connections[room_id].remove(user_id)
-                if not self.room_connections[room_id]:
-                    del self.room_connections[room_id]
             del self.user_rooms[user_id]
 
-    async def send_personal_message(self, message: str, user_id: str):
-        if user_id in self.active_connections:
-            await self.active_connections[user_id].send_text(message)
-
-    async def broadcast_to_room(self, message: str, room_id: str, exclude_user: str = None):
-        if room_id in self.room_connections:
-            for user_id in self.room_connections[room_id]:
-                if user_id != exclude_user and user_id in self.active_connections:
-                    await self.active_connections[user_id].send_text(message)
+    async def broadcast_to_room(self, room_id: str, message: dict, exclude_websocket: WebSocket = None):
+        if room_id in self.active_connections:
+            for connection in self.active_connections[room_id]:
+                if connection != exclude_websocket:
+                    try:
+                        await connection.send_text(json.dumps(message))
+                    except:
+                        # Remove broken connections
+                        self.active_connections[room_id].remove(connection)
 
 manager = ConnectionManager()
 
 @app.get("/")
 async def root():
-    return {"message": "Collaborative Web App API"}
+    """Root endpoint"""
+    return {"message": "Collaborative App Backend", "status": "running"}
 
 @app.get("/health")
-async def health_check():
-    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+async def health():
+    """Health check endpoint"""
+    return {"status": "healthy", "service": "backend", "timestamp": datetime.now().isoformat()}
+
+@app.get("/ready")
+async def ready():
+    """Readiness check endpoint"""
+    try:
+        # Test Firestore connection
+        firestore = get_firestore_service()
+        await firestore.test_connection()
+        return {"status": "ready", "service": "backend", "timestamp": datetime.now().isoformat()}
+    except Exception as e:
+        logger.error(f"Readiness check failed: {e}")
+        return {"status": "not_ready", "error": str(e)}
 
 @app.websocket("/ws/{room_id}/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
-    await manager.connect(websocket, user_id, room_id)
+    await manager.connect(websocket, room_id, user_id)
     
     try:
-        # Notify others that user joined
-        join_message = {
-            "type": "user_joined",
-            "user_id": user_id,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        await manager.broadcast_to_room(json.dumps(join_message), room_id, user_id)
-        
-        # Send current room state
-        room_state = await firestore_service.get_room_state(room_id)
-        await manager.send_personal_message(json.dumps(room_state), user_id)
-        
         while True:
             data = await websocket.receive_text()
             message_data = json.loads(data)
             
-            if message_data["type"] == "chat_message":
-                # Handle chat message
-                message = Message(
-                    id=str(uuid.uuid4()),
-                    user_id=user_id,
-                    content=message_data["content"],
-                    message_type=MessageType.TEXT,
-                    timestamp=datetime.utcnow(),
-                    room_id=room_id
-                )
-                
-                # Save to Firestore
-                await firestore_service.save_message(message)
-                
-                # Broadcast to room
-                await manager.broadcast_to_room(json.dumps({
-                    "type": "chat_message",
-                    "message": message.dict()
-                }), room_id)
-                
-            elif message_data["type"] == "drawing_action":
+            # Handle different message types
+            message_type = message_data.get("type")
+            
+            if message_type == "drawing":
                 # Handle drawing action
-                drawing_action = DrawingAction(
-                    id=str(uuid.uuid4()),
-                    user_id=user_id,
-                    action_type=message_data["action_type"],
-                    data=message_data["data"],
-                    timestamp=datetime.utcnow(),
-                    room_id=room_id
-                )
+                drawing_action = DrawingAction(**message_data.get("action", {}))
+                await get_firestore_service().save_drawing_action(room_id, drawing_action)
                 
-                # Save to Firestore
-                await firestore_service.save_drawing_action(drawing_action)
-                
-                # Broadcast to room
-                await manager.broadcast_to_room(json.dumps({
-                    "type": "drawing_action",
-                    "action": drawing_action.dict()
-                }), room_id, user_id)
-                
-            elif message_data["type"] == "user_presence":
-                # Handle user presence update
-                await manager.broadcast_to_room(json.dumps({
-                    "type": "user_presence",
+                # Broadcast to other users in the room
+                await manager.broadcast_to_room(room_id, {
+                    "type": "drawing",
+                    "action": drawing_action.dict(),
                     "user_id": user_id,
-                    "status": message_data["status"],
-                    "timestamp": datetime.utcnow().isoformat()
-                }), room_id, user_id)
+                    "timestamp": datetime.now().isoformat()
+                }, exclude_websocket=websocket)
+                
+            elif message_type == "message":
+                # Handle chat message
+                message = Message(**message_data.get("message", {}))
+                await get_firestore_service().save_message(room_id, message)
+                
+                # Broadcast to other users in the room
+                await manager.broadcast_to_room(room_id, {
+                    "type": "message",
+                    "message": message.dict(),
+                    "user_id": user_id,
+                    "timestamp": datetime.now().isoformat()
+                }, exclude_websocket=websocket)
+                
+            elif message_type == "clear_canvas":
+                # Handle canvas clear
+                await get_firestore_service().clear_drawing_actions(room_id)
+                
+                # Broadcast to other users in the room
+                await manager.broadcast_to_room(room_id, {
+                    "type": "clear_canvas",
+                    "user_id": user_id,
+                    "timestamp": datetime.now().isoformat()
+                }, exclude_websocket=websocket)
                 
     except WebSocketDisconnect:
-        manager.disconnect(user_id)
-        
-        # Notify others that user left
-        leave_message = {
-            "type": "user_left",
-            "user_id": user_id,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        await manager.broadcast_to_room(json.dumps(leave_message), room_id)
+        manager.disconnect(websocket, user_id)
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+        manager.disconnect(websocket, user_id)
 
 @app.post("/upload-file")
-async def upload_file(file: UploadFile = File(...), room_id: str = None, user_id: str = None):
+async def upload_file(file: UploadFile = File(...)):
+    """Upload file to Cloud Storage"""
     try:
-        # Validate file
-        if not file.filename:
-            raise HTTPException(status_code=400, detail="No file provided")
-        
-        # Upload to Google Cloud Storage
-        file_url = await storage_service.upload_file(file, room_id)
-        
-        # Create message for file
-        message = Message(
-            id=str(uuid.uuid4()),
-            user_id=user_id,
-            content=file.filename,
-            message_type=MessageType.FILE,
-            file_url=file_url,
-            timestamp=datetime.utcnow(),
-            room_id=room_id
-        )
-        
-        # Save to Firestore
-        await firestore_service.save_message(message)
-        
-        # Broadcast to room via WebSocket
-        await manager.broadcast_to_room(json.dumps({
-            "type": "file_upload",
-            "message": message.dict()
-        }), room_id)
-        
-        return {
-            "success": True,
-            "file_url": file_url,
-            "message": message.dict()
-        }
-        
+        storage = get_storage_service()
+        file_url = await storage.upload_file(file)
+        return {"url": file_url, "filename": file.filename}
     except Exception as e:
+        logger.error(f"File upload error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/messages/{room_id}")
 async def get_messages(room_id: str, limit: int = 50):
+    """Get messages for a room"""
     try:
-        messages = await firestore_service.get_messages(room_id, limit)
+        firestore = get_firestore_service()
+        messages = await firestore.get_messages(room_id, limit)
         return {"messages": messages}
     except Exception as e:
+        logger.error(f"Error getting messages: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/drawing-actions/{room_id}")
 async def get_drawing_actions(room_id: str):
+    """Get drawing actions for a room"""
     try:
-        actions = await firestore_service.get_drawing_actions(room_id)
+        firestore = get_firestore_service()
+        actions = await firestore.get_drawing_actions(room_id)
         return {"actions": actions}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/rooms")
-async def create_room(room_name: str):
-    try:
-        room_id = str(uuid.uuid4())
-        room_data = {
-            "id": room_id,
-            "name": room_name,
-            "created_at": datetime.utcnow().isoformat(),
-            "active_users": []
-        }
-        
-        await firestore_service.create_room(room_data)
-        return {"room_id": room_id, "room_data": room_data}
-        
-    except Exception as e:
+        logger.error(f"Error getting drawing actions: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/rooms")
 async def get_rooms():
+    """Get list of available rooms"""
     try:
-        rooms = await firestore_service.get_rooms()
+        firestore = get_firestore_service()
+        rooms = await firestore.get_rooms()
         return {"rooms": rooms}
     except Exception as e:
+        logger.error(f"Error getting rooms: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000) 
+    port = int(os.getenv("PORT", 8000))
+    logger.info(f"Starting server on port {port}")
+    uvicorn.run(app, host="0.0.0.0", port=port) 

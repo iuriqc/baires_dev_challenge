@@ -74,6 +74,25 @@ resource "google_artifact_registry_repository" "app_repository" {
   depends_on = [google_project_service.required_apis]
 }
 
+# Service account for backend
+resource "google_service_account" "backend_service_account" {
+  account_id   = "collaborative-app-backend-${var.environment}"
+  display_name = "Collaborative App Backend Service Account"
+}
+
+# IAM bindings for backend service account
+resource "google_project_iam_member" "backend_firestore_user" {
+  project = var.project_id
+  role    = "roles/datastore.user"
+  member  = "serviceAccount:${google_service_account.backend_service_account.email}"
+}
+
+resource "google_project_iam_member" "backend_storage_admin" {
+  project = var.project_id
+  role    = "roles/storage.admin"
+  member  = "serviceAccount:${google_service_account.backend_service_account.email}"
+}
+
 # Cloud Run service for backend
 resource "google_cloud_run_service" "backend" {
   name     = "collaborative-app-backend-${var.environment}"
@@ -82,7 +101,7 @@ resource "google_cloud_run_service" "backend" {
   template {
     spec {
       containers {
-        image = google_cloud_run_service.backend.status[0].url
+        image = var.backend_image != "" ? var.backend_image : "${var.region}-docker.pkg.dev/${var.project_id}/collaborative-app/collaborative-app-backend:latest"
         
         env {
           name  = "GOOGLE_CLOUD_PROJECT_ID"
@@ -105,6 +124,8 @@ resource "google_cloud_run_service" "backend" {
             memory = "512Mi"
           }
         }
+        
+        # No health checks - let the container start naturally
       }
       
       service_account_name = google_service_account.backend_service_account.email
@@ -112,13 +133,33 @@ resource "google_cloud_run_service" "backend" {
     
     metadata {
       annotations = {
-        "autoscaling.knative.dev/minScale" = "0"
-        "autoscaling.knative.dev/maxScale" = "10"
+        "autoscaling.knative.dev/minScale" = var.environment == "dev" ? "0" : "1"
+        "autoscaling.knative.dev/maxScale" = var.environment == "dev" ? "10" : "20"
+        "run.googleapis.com/execution-environment" = "gen2"
+        "run.googleapis.com/cloudsql-instances" = ""
+        "run.googleapis.com/client-name" = "terraform"
       }
     }
   }
   
   depends_on = [google_project_service.required_apis]
+  
+  # Ignore changes to image during initial deployment
+  lifecycle {
+    ignore_changes = [
+      template[0].spec[0].containers[0].image
+    ]
+  }
+}
+
+# Explicitly set public access for backend
+resource "google_cloud_run_service_iam_member" "backend_public" {
+  location = google_cloud_run_service.backend.location
+  service  = google_cloud_run_service.backend.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+  
+  depends_on = [google_cloud_run_service.backend]
 }
 
 # Cloud Run service for frontend
@@ -129,16 +170,16 @@ resource "google_cloud_run_service" "frontend" {
   template {
     spec {
       containers {
-        image = google_cloud_run_service.frontend.status[0].url
+        image = var.frontend_image != "" ? var.frontend_image : "${var.region}-docker.pkg.dev/${var.project_id}/collaborative-app/collaborative-app-frontend:latest"
         
         env {
           name  = "NEXT_PUBLIC_API_URL"
-          value = google_cloud_run_service.backend.status[0].url
+          value = "https://collaborative-app-backend-${var.environment}-${replace(var.region, "-", "")}-${var.project_id}.run.app"
         }
         
         env {
           name  = "NEXT_PUBLIC_WS_URL"
-          value = replace(google_cloud_run_service.backend.status[0].url, "https://", "wss://")
+          value = "wss://collaborative-app-backend-${var.environment}-${replace(var.region, "-", "")}-${var.project_id}.run.app"
         }
         
         env {
@@ -157,42 +198,24 @@ resource "google_cloud_run_service" "frontend" {
     
     metadata {
       annotations = {
-        "autoscaling.knative.dev/minScale" = "0"
-        "autoscaling.knative.dev/maxScale" = "10"
+        "autoscaling.knative.dev/minScale" = var.environment == "dev" ? "0" : "1"
+        "autoscaling.knative.dev/maxScale" = var.environment == "dev" ? "10" : "20"
+        "run.googleapis.com/execution-environment" = "gen2"
       }
     }
   }
   
   depends_on = [google_project_service.required_apis]
-}
-
-# Service account for backend
-resource "google_service_account" "backend_service_account" {
-  account_id   = "collaborative-app-backend-${var.environment}"
-  display_name = "Collaborative App Backend Service Account"
-}
-
-# IAM bindings for backend service account
-resource "google_project_iam_member" "backend_firestore_user" {
-  project = var.project_id
-  role    = "roles/datastore.user"
-  member  = "serviceAccount:${google_service_account.backend_service_account.email}"
-}
-
-resource "google_project_iam_member" "backend_storage_admin" {
-  project = var.project_id
-  role    = "roles/storage.admin"
-  member  = "serviceAccount:${google_service_account.backend_service_account.email}"
+  
+  # Ignore changes to image during initial deployment
+  lifecycle {
+    ignore_changes = [
+      template[0].spec[0].containers[0].image
+    ]
+  }
 }
 
 # Allow unauthenticated access to Cloud Run services
-resource "google_cloud_run_service_iam_member" "backend_public_access" {
-  location = google_cloud_run_service.backend.location
-  service  = google_cloud_run_service.backend.name
-  role     = "roles/run.invoker"
-  member   = "allUsers"
-}
-
 resource "google_cloud_run_service_iam_member" "frontend_public_access" {
   location = google_cloud_run_service.frontend.location
   service  = google_cloud_run_service.frontend.name
@@ -202,11 +225,11 @@ resource "google_cloud_run_service_iam_member" "frontend_public_access" {
 
 # Outputs
 output "backend_url" {
-  value = google_cloud_run_service.backend.status[0].url
+  value = "https://collaborative-app-backend-${var.environment}-${replace(var.region, "-", "")}-${var.project_id}.run.app"
 }
 
 output "frontend_url" {
-  value = google_cloud_run_service.frontend.status[0].url
+  value = "https://collaborative-app-frontend-${var.environment}-${replace(var.region, "-", "")}-${var.project_id}.run.app"
 }
 
 output "storage_bucket" {
