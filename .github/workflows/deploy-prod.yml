@@ -117,6 +117,10 @@ jobs:
     
     - name: Enable required APIs
       run: |
+        # Enable Service Usage API first (required to enable other APIs)
+        gcloud services enable serviceusage.googleapis.com
+        
+        # Enable other required APIs
         gcloud services enable run.googleapis.com
         gcloud services enable firestore.googleapis.com
         gcloud services enable storage.googleapis.com
