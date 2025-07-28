@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -177,12 +177,32 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
         manager.disconnect(websocket, user_id)
 
 @app.post("/upload-file")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(
+    file: UploadFile = File(...),
+    room_id: str = Form(...),
+    user_id: str = Form(...)
+):
     """Upload file to Cloud Storage"""
     try:
+        # Validate file type and size
         storage = get_storage_service()
-        file_url = await storage.upload_file(file)
-        return {"url": file_url, "filename": file.filename}
+        
+        if not storage.is_allowed_file_type(file.filename or ""):
+            raise HTTPException(status_code=400, detail="File type not allowed")
+        
+        if file.size and file.size > storage.get_file_size_limit():
+            raise HTTPException(status_code=400, detail="File too large")
+        
+        # Upload file
+        file_url = await storage.upload_file(file, room_id)
+        
+        return {
+            "success": True,
+            "file_url": file_url,
+            "filename": file.filename,
+            "file_size": file.size,
+            "file_type": file.content_type
+        }
     except Exception as e:
         logger.error(f"File upload error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
