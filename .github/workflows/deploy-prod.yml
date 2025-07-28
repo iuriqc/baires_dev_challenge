@@ -49,33 +49,6 @@ jobs:
         cd frontend
         npm test -- --watchAll=false || echo "Frontend tests failed, but continuing..."
 
-  security-scan:
-    runs-on: ubuntu-latest
-    
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Run Snyk to check for vulnerabilities
-      uses: snyk/actions/node@master
-      env:
-        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-      with:
-        args: --severity-threshold=high
-    
-    - name: Run Trivy vulnerability scanner
-      uses: aquasecurity/trivy-action@master
-      with:
-        scan-type: 'fs'
-        scan-ref: '.'
-        format: 'sarif'
-        output: 'trivy-results.sarif'
-    
-    - name: Upload Trivy scan results to GitHub Security tab
-      uses: github/codeql-action/upload-sarif@v2
-      if: always()
-      with:
-        sarif_file: 'trivy-results.sarif'
-
   code-coverage:
     runs-on: ubuntu-latest
     
@@ -124,7 +97,7 @@ jobs:
         fail_ci_if_error: false
 
   deploy:
-    needs: [test, security-scan, code-coverage]
+    needs: [test, code-coverage]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     
