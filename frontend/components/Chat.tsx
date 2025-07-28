@@ -61,6 +61,11 @@ export default function Chat({ socket }: ChatProps) {
 
   const testBackendConnection = async () => {
     try {
+      console.log('🔍 Environment variables:')
+      console.log('  - NEXT_PUBLIC_API_URL:', process.env.NEXT_PUBLIC_API_URL)
+      console.log('  - NEXT_PUBLIC_WS_URL:', process.env.NEXT_PUBLIC_WS_URL)
+      console.log('  - ENVIRONMENT:', process.env.ENVIRONMENT)
+      
       console.log('Testing backend connection...')
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/test-storage`)
       const data = await response.json()

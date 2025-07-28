@@ -123,15 +123,19 @@ async def ready():
 
 @app.websocket("/ws/{room_id}/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
-    await manager.connect(websocket, room_id, user_id)
+    logger.info(f"WebSocket connection attempt: room={room_id}, user={user_id}")
     
     try:
+        await manager.connect(websocket, room_id, user_id)
+        logger.info(f"WebSocket connected successfully: room={room_id}, user={user_id}")
+        
         while True:
             data = await websocket.receive_text()
             message_data = json.loads(data)
             
             # Handle different message types
             message_type = message_data.get("type")
+            logger.debug(f"Received WebSocket message: type={message_type}, user={user_id}")
             
             if message_type == "drawing":
                 # Handle drawing action
@@ -171,9 +175,10 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                 }, exclude_websocket=websocket)
                 
     except WebSocketDisconnect:
+        logger.info(f"WebSocket disconnected: room={room_id}, user={user_id}")
         manager.disconnect(websocket, user_id)
     except Exception as e:
-        logger.error(f"WebSocket error: {e}")
+        logger.error(f"WebSocket error: room={room_id}, user={user_id}, error={e}")
         manager.disconnect(websocket, user_id)
 
 @app.post("/upload-file")
