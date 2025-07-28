@@ -117,15 +117,30 @@ jobs:
     
     - name: Enable required APIs
       run: |
-        # Enable Service Usage API first (required to enable other APIs)
-        gcloud services enable serviceusage.googleapis.com
+        # Try to enable Service Usage API first (required to enable other APIs)
+        echo "🔧 Attempting to enable required APIs..."
         
-        # Enable other required APIs
-        gcloud services enable run.googleapis.com
-        gcloud services enable firestore.googleapis.com
-        gcloud services enable storage.googleapis.com
-        gcloud services enable artifactregistry.googleapis.com
-        gcloud services enable cloudbuild.googleapis.com
+        # Check if APIs are already enabled
+        if gcloud services list --enabled --filter="name:serviceusage.googleapis.com" --format="value(name)" | grep -q "serviceusage.googleapis.com"; then
+          echo "✅ Service Usage API already enabled"
+        else
+          echo "⚠️ Service Usage API not enabled - this may require manual setup"
+          echo "📋 Please enable APIs manually via:"
+          echo "   https://console.developers.google.com/apis/api/serviceusage.googleapis.com/overview?project=baires-dev-challenge"
+          echo "   Or run: gcloud services enable serviceusage.googleapis.com"
+        fi
+        
+        # Try to enable other APIs (may fail if Service Usage API is not enabled)
+        for api in run.googleapis.com firestore.googleapis.com storage.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com; do
+          if gcloud services list --enabled --filter="name:${api}" --format="value(name)" | grep -q "${api}"; then
+            echo "✅ ${api} already enabled"
+          else
+            echo "⚠️ ${api} not enabled - will attempt to enable..."
+            gcloud services enable ${api} || echo "❌ Failed to enable ${api} - may need manual setup"
+          fi
+        done
+        
+        echo "📋 API enablement check completed"
     
     - name: Create Artifact Registry repository
       run: |
