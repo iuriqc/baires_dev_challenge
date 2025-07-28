@@ -46,7 +46,7 @@ resource "google_firestore_database" "database" {
 resource "google_storage_bucket" "file_storage" {
   name          = "${var.project_id}-files-${var.environment}"
   location      = var.region
-  force_destroy = var.environment == "dev"
+  force_destroy = var.environment == "prd"
   
   uniform_bucket_level_access = true
   
