@@ -155,7 +155,7 @@ gcloud projects add-iam-policy-binding $(gcloud config get-value project) \
 ### 4. Create and Download Service Account Key
 
 ```bash
-gcloud iam service-accounts keys create ~/collaborative-app-sa-key.json \
+gcloud iam service-accounts keys create collaborative-app-sa-key.json \
     --iam-account=collaborative-app-sa@$(gcloud config get-value project).iam.gserviceaccount.com
 ```
 
