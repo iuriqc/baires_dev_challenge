@@ -59,6 +59,19 @@ export default function Chat({ socket }: ChatProps) {
     }
   }
 
+  const testBackendConnection = async () => {
+    try {
+      console.log('Testing backend connection...')
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/test-storage`)
+      const data = await response.json()
+      console.log('Backend test result:', data)
+      toast.success(`Backend test: ${data.status}`)
+    } catch (error) {
+      console.error('Backend test failed:', error)
+      toast.error('Backend test failed')
+    }
+  }
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     
@@ -225,6 +238,15 @@ export default function Chat({ socket }: ChatProps) {
             />
             <Paperclip className={`w-5 h-5 ${isUploading ? 'text-gray-300' : 'text-gray-400 hover:text-gray-600'}`} />
           </label>
+          
+          {/* Test button for debugging */}
+          <button
+            onClick={testBackendConnection}
+            className="text-xs px-2 py-1 bg-gray-200 hover:bg-gray-300 rounded"
+            title="Test backend connection"
+          >
+            Test
+          </button>
           
           <div className="flex-1 relative">
             <textarea

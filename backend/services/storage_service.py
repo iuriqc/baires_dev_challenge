@@ -17,11 +17,18 @@ class StorageService:
         # For local development, you can use gcloud auth application-default login
         self.client = storage.Client()
         self.bucket_name = os.getenv('GCS_BUCKET_NAME', 'collaborative-app-files')
-        self.bucket = self.client.bucket(self.bucket_name)
         
-        # Ensure bucket exists
-        if not self.bucket.exists():
-            self.bucket = self.client.create_bucket(self.bucket_name)
+        try:
+            self.bucket = self.client.bucket(self.bucket_name)
+            
+            # Check if bucket exists, but don't create it automatically in production
+            if not self.bucket.exists():
+                print(f"Warning: Bucket '{self.bucket_name}' does not exist")
+                print("Please create the bucket manually or ensure proper permissions")
+                # Don't create bucket automatically as it might fail due to permissions
+        except Exception as e:
+            print(f"Error initializing storage service: {e}")
+            raise
     
     async def upload_file(self, file: UploadFile, room_id: Optional[str] = None) -> str:
         """Upload a file to Google Cloud Storage and return the public URL"""

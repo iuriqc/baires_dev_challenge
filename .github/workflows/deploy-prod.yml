@@ -173,6 +173,11 @@ jobs:
     - name: Create Cloud Storage bucket
       run: |
         gsutil mb -p $PROJECT_ID -c STANDARD -l ${{ env.REGION }} gs://$PROJECT_ID-files-$ENVIRONMENT || echo "Storage bucket already exists"
+        gsutil iam ch allUsers:objectViewer gs://$PROJECT_ID-files-$ENVIRONMENT || echo "Bucket permissions already set"
+        
+        # Also create the default bucket for file uploads
+        gsutil mb -p $PROJECT_ID -c STANDARD -l ${{ env.REGION }} gs://collaborative-app-files || echo "Default storage bucket already exists"
+        gsutil iam ch allUsers:objectViewer gs://collaborative-app-files || echo "Default bucket permissions already set"
     
     - name: Deploy backend to Cloud Run
       run: |

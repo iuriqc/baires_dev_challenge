@@ -184,17 +184,24 @@ async def upload_file(
 ):
     """Upload file to Cloud Storage"""
     try:
+        logger.info(f"File upload request: {file.filename}, size: {file.size}, room: {room_id}, user: {user_id}")
+        
         # Validate file type and size
         storage = get_storage_service()
         
-        if not storage.is_allowed_file_type(file.filename or ""):
-            raise HTTPException(status_code=400, detail="File type not allowed")
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="No filename provided")
+        
+        if not storage.is_allowed_file_type(file.filename):
+            raise HTTPException(status_code=400, detail=f"File type not allowed: {file.filename}")
         
         if file.size and file.size > storage.get_file_size_limit():
-            raise HTTPException(status_code=400, detail="File too large")
+            raise HTTPException(status_code=400, detail=f"File too large: {file.size} bytes (max: {storage.get_file_size_limit()} bytes)")
         
         # Upload file
+        logger.info(f"Uploading file to storage...")
         file_url = await storage.upload_file(file, room_id)
+        logger.info(f"File uploaded successfully: {file_url}")
         
         return {
             "success": True,
@@ -203,9 +210,31 @@ async def upload_file(
             "file_size": file.size,
             "file_type": file.content_type
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"File upload error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+@app.get("/test-storage")
+async def test_storage():
+    """Test storage service connection"""
+    try:
+        storage = get_storage_service()
+        bucket_name = storage.bucket_name
+        bucket_exists = storage.bucket.exists()
+        
+        return {
+            "bucket_name": bucket_name,
+            "bucket_exists": bucket_exists,
+            "status": "ok"
+        }
+    except Exception as e:
+        logger.error(f"Storage test error: {e}")
+        return {
+            "error": str(e),
+            "status": "error"
+        }
 
 @app.get("/messages/{room_id}")
 async def get_messages(room_id: str, limit: int = 50):
