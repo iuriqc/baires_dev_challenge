@@ -1,0 +1,11 @@
+# Google Cloud Configuration
+project_id = "your-project-id"
+region     = "us-central1"
+zone       = "us-central1-a"
+
+# Environment Configuration
+environment = "dev"  # or "prd"
+
+# Optional: Custom Domain Configuration
+# domain     = "app.yourdomain.com"
+# enable_ssl = true 

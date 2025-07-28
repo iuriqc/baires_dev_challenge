@@ -1,0 +1,23 @@
+from pydantic import BaseModel, Field
+from datetime import datetime
+from typing import Dict, Any, Optional
+from enum import Enum
+
+class DrawingActionType(str, Enum):
+    DRAW = "draw"
+    CLEAR = "clear"
+    CHANGE_COLOR = "change_color"
+    CHANGE_TOOL = "change_tool"
+
+class DrawingAction(BaseModel):
+    id: str = Field(..., description="Unique action ID")
+    user_id: str = Field(..., description="User ID who performed the action")
+    action_type: DrawingActionType = Field(..., description="Type of drawing action")
+    data: Dict[str, Any] = Field(..., description="Action data (coordinates, color, etc.)")
+    timestamp: datetime = Field(..., description="Action timestamp")
+    room_id: str = Field(..., description="Room ID where action was performed")
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        } 

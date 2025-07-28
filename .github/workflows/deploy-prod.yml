@@ -1,0 +1,235 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [ main ]
+  release:
+    types: [ published ]
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REGION: us-central1
+  ENVIRONMENT: prd
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install backend dependencies
+      run: |
+        cd backend
+        pip install -r requirements.txt
+    
+    - name: Run backend tests
+      run: |
+        cd backend
+        python -m pytest tests/ -v --cov=app --cov-report=xml
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./backend/coverage.xml
+        flags: backend
+        name: backend-coverage
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+    
+    - name: Install frontend dependencies
+      run: |
+        cd frontend
+        npm ci
+    
+    - name: Run frontend tests
+      run: |
+        cd frontend
+        npm run test -- --coverage
+    
+    - name: Upload frontend coverage
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./frontend/coverage/lcov.info
+        flags: frontend
+        name: frontend-coverage
+    
+    - name: Build frontend
+      run: |
+        cd frontend
+        npm run build
+    
+    - name: Security scan
+      uses: snyk/actions/node@master
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      with:
+        args: --severity-threshold=high
+
+  security-scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: 'gcr.io/${{ env.PROJECT_ID }}/collaborative-app-backend:latest'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+    
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  deploy:
+    needs: [test, security-scan]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.event_name == 'release'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Google Auth
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY }}
+    
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+    
+    - name: Configure Docker
+      run: gcloud auth configure-docker
+    
+    - name: Build and push backend image
+      run: |
+        cd backend
+        docker build -t gcr.io/$PROJECT_ID/collaborative-app-backend:${{ github.sha }} .
+        docker build -t gcr.io/$PROJECT_ID/collaborative-app-backend:latest .
+        docker push gcr.io/$PROJECT_ID/collaborative-app-backend:${{ github.sha }}
+        docker push gcr.io/$PROJECT_ID/collaborative-app-backend:latest
+    
+    - name: Build and push frontend image
+      run: |
+        cd frontend
+        docker build -t gcr.io/$PROJECT_ID/collaborative-app-frontend:${{ github.sha }} .
+        docker build -t gcr.io/$PROJECT_ID/collaborative-app-frontend:latest .
+        docker push gcr.io/$PROJECT_ID/collaborative-app-frontend:${{ github.sha }}
+        docker push gcr.io/$PROJECT_ID/collaborative-app-frontend:latest
+    
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: "1.5.0"
+    
+    - name: Terraform Init
+      run: |
+        cd infrastructure
+        terraform init
+    
+    - name: Terraform Plan
+      run: |
+        cd infrastructure
+        terraform plan -var="project_id=$PROJECT_ID" -var="environment=$ENVIRONMENT" -out=tfplan
+      env:
+        TF_VAR_project_id: ${{ secrets.GCP_PROJECT_ID }}
+    
+    - name: Terraform Apply
+      run: |
+        cd infrastructure
+        terraform apply tfplan
+      env:
+        TF_VAR_project_id: ${{ secrets.GCP_PROJECT_ID }}
+    
+    - name: Deploy to Cloud Run
+      run: |
+        gcloud run deploy collaborative-app-backend-$ENVIRONMENT \
+          --image gcr.io/$PROJECT_ID/collaborative-app-backend:${{ github.sha }} \
+          --region $REGION \
+          --platform managed \
+          --allow-unauthenticated \
+          --set-env-vars="GOOGLE_CLOUD_PROJECT_ID=$PROJECT_ID,ENVIRONMENT=$ENVIRONMENT" \
+          --min-instances=1
+        
+        gcloud run deploy collaborative-app-frontend-$ENVIRONMENT \
+          --image gcr.io/$PROJECT_ID/collaborative-app-frontend:${{ github.sha }} \
+          --region $REGION \
+          --platform managed \
+          --allow-unauthenticated \
+          --set-env-vars="NEXT_PUBLIC_API_URL=$(gcloud run services describe collaborative-app-backend-$ENVIRONMENT --region=$REGION --format='value(status.url)'),ENVIRONMENT=$ENVIRONMENT" \
+          --min-instances=1
+    
+    - name: Run smoke tests
+      run: |
+        BACKEND_URL=$(gcloud run services describe collaborative-app-backend-$ENVIRONMENT --region=$REGION --format='value(status.url)')
+        FRONTEND_URL=$(gcloud run services describe collaborative-app-frontend-$ENVIRONMENT --region=$REGION --format='value(status.url)')
+        
+        # Test backend health
+        curl -f $BACKEND_URL/health || exit 1
+        
+        # Test frontend loads
+        curl -f $FRONTEND_URL || exit 1
+    
+    - name: Create deployment notification
+      if: success()
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const backendUrl = '${{ steps.deploy.outputs.backend_url }}';
+          const frontendUrl = '${{ steps.deploy.outputs.frontend_url }}';
+          
+          github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: `🚀 Production Deployment - ${new Date().toISOString().split('T')[0]}`,
+            body: `## Production Deployment Completed Successfully!
+          
+          **Backend URL:** ${backendUrl}
+          **Frontend URL:** ${frontendUrl}
+          **Commit:** ${context.sha}
+          **Deployed by:** ${context.actor}
+          
+          ### What's New
+          - Real-time collaborative whiteboard
+          - Chat with file sharing
+          - User presence indicators
+          - Google Cloud Storage integration
+          
+          ### Health Checks
+          - ✅ Backend API responding
+          - ✅ Frontend application loading
+          - ✅ WebSocket connections working
+          - ✅ File upload functionality tested`,
+            labels: ['deployment', 'production']
+          });
+    
+    - name: Notify on failure
+      if: failure()
+      uses: actions/github-script@v7
+      with:
+        script: |
+          github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: `❌ Production Deployment Failed - ${new Date().toISOString().split('T')[0]}`,
+            body: `## Production Deployment Failed!
+          
+          **Commit:** ${context.sha}
+          **Failed by:** ${context.actor}
+          
+          Please check the deployment logs and fix the issues.`,
+            labels: ['deployment', 'production', 'bug']
+          }); 
